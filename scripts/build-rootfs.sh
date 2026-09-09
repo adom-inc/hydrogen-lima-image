@@ -19,12 +19,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VER="${GOLDEN_VERSION:-v2}"
-# PINNED to 4.100.3 (VS Code 1.100) — the last release BEFORE VS Code 1.101 added the
-# `navigator is now a global in nodejs` PendingMigration guard, which crashes the Claude Code
-# extension's host (it references navigator at load) → blank Claude panel. Anthropic has no
-# fixed build yet (open issue). Do NOT bump past 4.100.x until the extension is migrated.
-# 2026-07-17: this was THE fresh-install "Claude panel won't render" regression (4.124.2 → 1.124).
-CSV="${CODE_SERVER_VERSION:-4.100.3}"
+# code-server pin. History: 2026-07-17 pinned to 4.100.3 (VS Code 1.100) because VS Code
+# 1.101's `navigator is now a global in nodejs` PendingMigration guard crashed the Claude
+# Code extension host (blank panel) — THE fresh-install regression of that era. v25
+# (2026-09-09, Kyle: "update to the latest version of code-server") moves to 4.136.2 — the
+# current Claude Code extension (2.1.26x) no longer trips the guard (proven in the v25
+# bake preview). The workbench patch (image/adom-agent-bar/patch-workbench.cjs) carries
+# BOTH minified shapes (1.100 and >=1.135). Keep the smoke assert on the exact minor so a
+# stray CODE_SERVER_VERSION can't silently bake an untested workbench.
+CSV="${CODE_SERVER_VERSION:-4.136.2}"
 # (legacy .cloud wiki host reference REMOVED 2026-08-26 — wiki.adom.inc is canonical)
 WORK="${WORK:-/tmp/hydrogen-golden-build}"
 ROOT="${WORK}/rootfs"
@@ -251,8 +254,8 @@ in_root "mkdir -p /var/lib/adom-bootstrap \
 log "smoke test"
 in_root "set -e; code-server --version; node --version; git --version; \
   test -e /lib64/ld-linux-x86-64.so.2 || { echo 'MISSING x86-64 loader (Rosetta-hybrid glibc)'; exit 1; }; \
-  code-server --version 2>/dev/null | grep -qE '^4\\.100\\.' \
-      || { echo 'code-server is NOT 4.100.x — VS Code >=1.101 crashes the Claude Code extension (navigator global guard)'; exit 1; }; \
+  code-server --version 2>/dev/null | grep -qE '^4\\.136\\.' \
+      || { echo 'code-server is NOT 4.136.x — only that minor is proven with the workbench patch + the four agent extensions (v25)'; exit 1; }; \
   test -x /etc/init-host-internal.sh; test -x /opt/adom/bootstrap.sh; \
   test -f /var/lib/adom-bootstrap/phase-a-done; cat /etc/adom-golden-version; \
   for b in adom-cli adom-vscode adom-mouser adom-digikey adom-jlcpcb adom-parts-search adom-gchat; do \
@@ -340,11 +343,11 @@ in_root "set -e; code-server --version; node --version; git --version; \
       | grep -qi 'google.google-antigravity' || { echo 'MISSING antigravity extension (v24)'; exit 1; }; \
   runuser -u adom -- /usr/lib/code-server/bin/code-server --list-extensions 2>/dev/null \
       | grep -qi 'adom.adom-agent-bar' || { echo 'MISSING adom-agent-bar extension (v25)'; exit 1; }; \
-  jq -e '.["workbench.editor.editorActionsLocation"] == "titleBar"' /home/adom/.local/share/code-server/User/settings.json >/dev/null \
+  jq -e '.\"workbench.editor.editorActionsLocation\" == \"titleBar\"' /home/adom/.local/share/code-server/User/settings.json >/dev/null \
       || { echo 'settings.json lacks editorActionsLocation=titleBar (agent bar would sit in the tab strip)'; exit 1; }; \
   grep -q hydrogenEmptyGroupEditorActions /usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench/workbench.js \
       || { echo 'workbench.js lacks the empty-group editor-actions patch (agent bar would hide with no tabs open)'; exit 1; }; \
-  jq -e '.hydrogenCacheBust == 1 and (.commit != .hydrogenOrigCommit)' /usr/lib/code-server/lib/vscode/product.json >/dev/null \
+  jq -e '.hydrogenCacheBust >= 1 and (.commit != .hydrogenOrigCommit)' /usr/lib/code-server/lib/vscode/product.json >/dev/null \
       || { echo 'product.json commit not cache-busted (clients would keep the unpatched workbench.js)'; exit 1; }; \
   test -L /home/adom/.gemini/bin/agy && test -x /home/adom/.gemini/bin/agy \
       || { echo 'MISSING ~/.gemini/bin/agy symlink (antigravity ext would re-download its backend)'; exit 1; }; \

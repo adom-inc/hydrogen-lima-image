@@ -64,7 +64,26 @@ let nomatch = false;
 if (src.includes(MARK)) {
   console.log('editorActions: already');
 } else {
-  const re = new RegExp(
+  // ID = a minified identifier char (VS Code mangles some names to `$s`, `D`, …).
+  const ID = '[\\w$]';
+  // VS Code >= 1.135 (code-server >= 4.101): createEditorActions gained a
+  // defaulted menu-id param (`(e,t=A.EditorTitle)`), a `let` (not `const`) body,
+  // an inline reopen-with block, and readable member names (menuService,
+  // resourceContext). Named groups so the two builds don't fight over positions.
+  const re135 = new RegExp(
+    'createEditorActions\\((?<e>\\w+),(?<menuId>\\w+)=(?<menuConst>\\w+\\.EditorTitle)\\)\\{' +
+    'let (?<acts>\\w+)=\\{primary:\\[\\],secondary:\\[\\]\\},(?<sig>\\w+),(?<pane>\\w+)=this\\.activeEditorPane;' +
+    'if\\(\\k<pane> instanceof ' + ID + '+\\)\\{' +
+    'let (?<svc>\\w+)=\\k<pane>\\.scopedContextKeyService\\?\\?this\\.scopedContextKeyService,' +
+    '(?<menuVar>\\w+)=\\k<e>\\.add\\(this\\.(?<menuSvc>\\w+)\\.createMenu\\(\\k<menuId>,\\k<svc>,(?<opts>\\{[^}]*\\})\\)\\);' +
+    '\\k<sig>=\\k<menuVar>\\.onDidChange;let (?<pred>\\w+)=(?<predExpr>\\([^)]*\\)=>[^;]+);' +
+    'if\\(\\k<acts>=(?<fill>\\w+)\\(\\k<menuVar>\\.getActions\\((?<getOpts>\\{[^}]*\\})\\),"navigation",\\k<pred>\\),\\k<menuId>===\\k<menuConst>\\)\\{' +
+    '.*?\\}\\}' +
+    'else\\{let (?<ev>\\w+)=\\k<e>\\.add\\(new (?<emitter>' + ID + '+)\\);\\k<sig>=\\k<ev>\\.event,' +
+    '\\k<e>\\.add\\(this\\.onDidActiveEditorChange\\(\\(\\)=>\\k<ev>\\.fire\\(\\)\\)\\)\\}'
+  );
+  // VS Code 1.100 (code-server 4.100.x): the original shape.
+  const re100 = new RegExp(
     'createEditorActions\\((\\w+)\\)\\{let (\\w+)=\\{primary:\\[\\],secondary:\\[\\]\\},(\\w+);' +
     'const (\\w+)=this\\.activeEditorPane;if\\(\\4 instanceof \\w+\\)\\{' +
     'const (\\w+)=\\4\\.scopedContextKeyService\\?\\?this\\.scopedContextKeyService,' +
@@ -73,19 +92,35 @@ if (src.includes(MARK)) {
     '\\2=(\\w+)\\(\\6\\.getActions\\(\\{arg:this\\.\\w+\\.get\\(\\),shouldForwardArgs:!0\\}\\),"navigation",\\10\\)\\}' +
     'else\\{const (\\w+)=\\1\\.add\\(new (\\w+)\\);\\3=\\13\\.event,\\1\\.add\\(this\\.onDidActiveEditorChange\\(\\(\\)=>\\13\\.fire\\(\\)\\)\\)\\}'
   );
-  const m = src.match(re);
-  if (!m) {
-    console.log('editorActions: NOMATCH'); nomatch = true;
-  } else {
-    const [whole, e, t, s, , , , svc, menuId, opts, , pred, fill, r, emitter] = m;
+  const m135 = src.match(re135);
+  if (m135) {
+    const g = m135.groups;
+    // Rebuild the empty-group ELSE so it constructs the SAME EditorTitle menu
+    // against the workbench's scoped context, re-firing on menu + editor change.
     const elseNew =
-      `else{${MARK}const ${r}=${e}.add(new ${emitter});${s}=${r}.event;` +
-      `const o=${e}.add(this.${svc}.createMenu(${menuId}.EditorTitle,this.scopedContextKeyService,${opts}));` +
-      `${e}.add(o.onDidChange(()=>${r}.fire()));${e}.add(this.onDidActiveEditorChange(()=>${r}.fire()));` +
-      `${t}=${fill}(o.getActions({shouldForwardArgs:!0}),"navigation",${pred})}`;
+      `else{${MARK}let ${g.ev}=${g.e}.add(new ${g.emitter});${g.sig}=${g.ev}.event;` +
+      `let o=${g.e}.add(this.${g.menuSvc}.createMenu(${g.menuId},this.scopedContextKeyService,${g.opts}));` +
+      `${g.e}.add(o.onDidChange(()=>${g.ev}.fire()));${g.e}.add(this.onDidActiveEditorChange(()=>${g.ev}.fire()));` +
+      `${g.acts}=${g.fill}(o.getActions({shouldForwardArgs:!0,renderShortTitle:!0}),"navigation",${g.pred})}`;
+    const whole = m135[0];
     const elseOld = whole.slice(whole.indexOf('else{'));
     src = src.replace(whole, whole.replace(elseOld, elseNew));
-    console.log('editorActions: CHANGED');
+    console.log('editorActions: CHANGED (v1.135)');
+  } else {
+    const m = src.match(re100);
+    if (!m) {
+      console.log('editorActions: NOMATCH'); nomatch = true;
+    } else {
+      const [whole, e, t, s, , , , svc, menuId, opts, , pred, fill, r, emitter] = m;
+      const elseNew =
+        `else{${MARK}const ${r}=${e}.add(new ${emitter});${s}=${r}.event;` +
+        `const o=${e}.add(this.${svc}.createMenu(${menuId}.EditorTitle,this.scopedContextKeyService,${opts}));` +
+        `${e}.add(o.onDidChange(()=>${r}.fire()));${e}.add(this.onDidActiveEditorChange(()=>${r}.fire()));` +
+        `${t}=${fill}(o.getActions({shouldForwardArgs:!0}),"navigation",${pred})}`;
+      const elseOld = whole.slice(whole.indexOf('else{'));
+      src = src.replace(whole, whole.replace(elseOld, elseNew));
+      console.log('editorActions: CHANGED (v1.100)');
+    }
   }
 }
 
