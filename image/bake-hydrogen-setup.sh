@@ -287,7 +287,7 @@ log "  adom-agent-bar extension baked ($(basename "$AGENT_BAR_VSIX"))"
 WB=/usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench/workbench.js
 PATCH_OUT="$(/usr/lib/code-server/lib/node /tmp/adom-agent-bar/patch-workbench.cjs "$WB" 2>&1)" \
   || { echo "bake: workbench patch failed: $PATCH_OUT" >&2; exit 1; }
-grep -q hydrogenEmptyGroupEditorActions "$WB" || { echo "bake: workbench.js lacks the empty-group marker" >&2; exit 1; }
+grep -q hydrogenEmptyGroupEditorActions2 "$WB" || { echo "bake: workbench.js lacks the gen-2 empty-group marker" >&2; exit 1; }
 grep -q hydrogenSwStartupRace "$WB" || { echo "bake: workbench.js lacks the service-worker marker" >&2; exit 1; }
 rm -f "$WB.orig"   # pristine copy is pointless in an image (11 MB); Hydrogen's launch ensure keeps one on live machines
 rm -rf /tmp/adom-agent-bar

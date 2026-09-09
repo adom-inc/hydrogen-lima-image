@@ -45,9 +45,19 @@ const path = require('path');
 const crypto = require('crypto');
 const file = process.argv[2];
 const productFile = process.argv[3] || path.resolve(path.dirname(file), '../../../../../product.json');
-const MARK = '/*hydrogenEmptyGroupEditorActions*/';
+// Generation 2 of the editorActions rewrite. Generation 1 (`/*hydrogenEmptyGroupEditorActions*/`,
+// golden v25) passed the "navigation" predicate to the 1.135+ build by its minified NAME —
+// but that name is `let`-scoped inside the `if (pane)` block, so in the empty-group `else`
+// it is a free variable: createEditorActions() threw for every editor-less group. The title
+// bar builds editor actions AND the layout controls in one closure, so the throw emptied the
+// whole right-hand toolbar whenever "Editor Actions" was on (Kyle 2026-09-09, fresh v25
+// install: no agent icons, and toggling Editor Actions made the layout controls vanish).
+// The predicate is now inlined by expression; a gen-1 file is repaired in place (the
+// image carries no .orig — bake-hydrogen-setup.sh deletes it).
+const MARK = '/*hydrogenEmptyGroupEditorActions2*/';
+const MARK_V1 = '/*hydrogenEmptyGroupEditorActions*/';
 const MARK_SW = '/*hydrogenSwStartupRace*/';
-const BUST = 2; // 1 = editorActions; 2 = + swStartup
+const BUST = 3; // 1 = editorActions; 2 = + swStartup; 3 = editorActions gen 2 (inlined predicate)
 let src = fs.readFileSync(file, 'utf8');
 const orig = src;
 let nomatch = false;
@@ -63,6 +73,20 @@ let nomatch = false;
 // Every identifier is captured from the same match so a re-minified build still fits.
 if (src.includes(MARK)) {
   console.log('editorActions: already');
+} else if (src.includes(MARK_V1)) {
+  // Gen-1 repair: the if-branch still declares the predicate (`let l=(u,p)=>…;`); the
+  // marked else ends `,"navigation",l)}` with that block-scoped name. Swap in the expression.
+  const reV1 = new RegExp(
+    '(createEditorActions\\(\\w+,\\w+=\\w+\\.EditorTitle\\)\\{.*?let (\\w+)=(\\([^)]*\\)=>[^;]+);.*?else\\{)' +
+    MARK_V1.replace(/[*/]/g, '\\$&') + '(.*?,"navigation",)\\2(\\)\\}return\\{actions:)'
+  );
+  const m = src.match(reV1);
+  if (!m) {
+    console.log('editorActions: NOMATCH (gen-1 repair)'); nomatch = true;
+  } else {
+    src = src.replace(m[0], `${m[1]}${MARK}${m[4]}${m[3]}${m[5]}`);
+    console.log('editorActions: CHANGED (gen-1 repair)');
+  }
 } else {
   // ID = a minified identifier char (VS Code mangles some names to `$s`, `D`, …).
   const ID = '[\\w$]';
@@ -97,11 +121,13 @@ if (src.includes(MARK)) {
     const g = m135.groups;
     // Rebuild the empty-group ELSE so it constructs the SAME EditorTitle menu
     // against the workbench's scoped context, re-firing on menu + editor change.
+    // The predicate goes in by EXPRESSION (`predExpr`), never by name: `pred` is
+    // `let`-bound inside the if-block and out of scope here.
     const elseNew =
       `else{${MARK}let ${g.ev}=${g.e}.add(new ${g.emitter});${g.sig}=${g.ev}.event;` +
       `let o=${g.e}.add(this.${g.menuSvc}.createMenu(${g.menuId},this.scopedContextKeyService,${g.opts}));` +
       `${g.e}.add(o.onDidChange(()=>${g.ev}.fire()));${g.e}.add(this.onDidActiveEditorChange(()=>${g.ev}.fire()));` +
-      `${g.acts}=${g.fill}(o.getActions({shouldForwardArgs:!0,renderShortTitle:!0}),"navigation",${g.pred})}`;
+      `${g.acts}=${g.fill}(o.getActions({shouldForwardArgs:!0,renderShortTitle:!0}),"navigation",${g.predExpr})}`;
     const whole = m135[0];
     const elseOld = whole.slice(whole.indexOf('else{'));
     src = src.replace(whole, whole.replace(elseOld, elseNew));

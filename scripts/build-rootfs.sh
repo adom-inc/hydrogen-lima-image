@@ -345,7 +345,7 @@ in_root "set -e; code-server --version; node --version; git --version; \
       | grep -qi 'adom.adom-agent-bar' || { echo 'MISSING adom-agent-bar extension (v25)'; exit 1; }; \
   jq -e '.\"workbench.editor.editorActionsLocation\" == \"titleBar\"' /home/adom/.local/share/code-server/User/settings.json >/dev/null \
       || { echo 'settings.json lacks editorActionsLocation=titleBar (agent bar would sit in the tab strip)'; exit 1; }; \
-  grep -q hydrogenEmptyGroupEditorActions /usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench/workbench.js \
+  grep -q hydrogenEmptyGroupEditorActions2 /usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench/workbench.js \
       || { echo 'workbench.js lacks the empty-group editor-actions patch (agent bar would hide with no tabs open)'; exit 1; }; \
   jq -e '.hydrogenCacheBust >= 1 and (.commit != .hydrogenOrigCommit)' /usr/lib/code-server/lib/vscode/product.json >/dev/null \
       || { echo 'product.json commit not cache-busted (clients would keep the unpatched workbench.js)'; exit 1; }; \
