@@ -12,9 +12,16 @@
 #
 # NOTHING here may require GitHub authentication — this image is public and
 # installs on machines with no GitHub identity. Sources used: the public Adom
-# wiki, Open VSX, and claude.ai. The adom skills come from the adom-wiki-managed
-# installs below (adom-wiki pkg install adom/hydrogen-mac-bootstrap et al. — adom-wiki
-# is the official wiki CLI; adompkg is RETIRED and no longer ships in the image).
+# wiki, Open VSX, and claude.ai.
+#
+# SKILLS ARE NOT BAKED (slim image, Kyle 2026-08-05). This comment used to say
+# the adom skills "come from the adom-wiki-managed installs below", which reads
+# as if `adom-wiki pkg install adom/hydrogen-mac-bootstrap` runs during the
+# bake. It does not — see the SLIM IMAGE note further down: only the adom-wiki
+# CLI and adom-google are baked, and Hydrogen's `install-hydrogen-skills`
+# cascade step installs the whole skills/tooling layer fresh on every install.
+# (adompkg is RETIRED and no longer ships in the image.) Flagged by the CLI
+# audit, 2026-09-17: the two comments contradicted each other.
 
 set -euo pipefail
 log() { echo "[bake-hydrogen-setup] $*"; }
