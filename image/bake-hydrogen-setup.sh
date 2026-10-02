@@ -386,42 +386,32 @@ chown adom:adom /home/adom/.config/code-server/config.yaml
 
 # ── step configure-vscode: workbench.html IndexedDB state seed ────────────
 # One injected script, runs on every page load, seeds VS Code's per-origin
-# IndexedDB state:
-#   1. trusted domains "*" — suppresses the 'open external website?' dialog
-#      (same as the cascade's patch)
-#   2. activity bar: unpin Search/SCM/Run-and-Debug + the four agent
-#      sidebars (Claude sessions, Codex, Kimi, Antigravity — Kyle 2026-09-03:
-#      agents live in tabs via the agent bar, not the sidebar) via
-#      workbench.activity.pinnedViewlets2 — replaces the cascade's
-#      interactive :8821 hide-activitybar step. Seeded ONCE per profile
-#      (adom.activityBarSeeded marker) so a user who deliberately re-pins
-#      them is never fought. First-ever paint can race VS Code's startup
-#      read — any reload (Hydrogen's setup reloads the iframe anyway) applies it.
-log "configure-vscode: workbench.html state seed (trusted domains + activity bar)"
+# IndexedDB state with trusted domains "*" — suppresses the 'open external
+# website?' dialog (same as the cascade's patch). It opens ONLY an existing DB
+# (aborting its own upgrade) and releases the connection, so it never creates a
+# store-less DB that would block VS Code's startup.
+#
+# It does NOT touch the activity bar any more (2026-10-02): which icons show
+# there, and which buttons show in the editor title bar, is Hydrogen's editor
+# chrome policy (hydrogen-control editor_chrome.rs), applied by the script
+# Hydrogen appends to workbench.html at every launch. The bake used to seed the
+# same pinnedViewlets2 unpins here, which made two writers for one bit.
+log "configure-vscode: workbench.html state seed (trusted domains)"
 WB=/usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench/workbench.html
 python3 - "$WB" <<'PY'
 import sys
 wb = sys.argv[1]
 html = open(wb).read()
 SCRIPT = ('<script>(function(){try{var r=indexedDB.open("vscode-web-state-db-global",1);'
- 'r.onsuccess=function(e){var d=e.target.result;'
- 'try{var t=d.transaction("ItemTable","readwrite");t.objectStore("ItemTable").put(JSON.stringify(["*"]),"http.linkProtectionTrustedDomains")}catch(_){}'
- 'try{var t1=d.transaction("ItemTable","readonly");var os1=t1.objectStore("ItemTable");'
- 'var sg=os1.get("adom.activityBarSeeded");sg.onsuccess=function(){if(sg.result)return;'
- 'var pg=os1.get("workbench.activity.pinnedViewlets2");pg.onsuccess=function(){'
- 'var arr=[];try{if(pg.result)arr=JSON.parse(pg.result)}catch(_){}'
- 'var ids=["workbench.view.search","workbench.view.scm","workbench.view.debug","workbench.view.extension.codexViewContainer","workbench.view.extension.kimi-sidebar","workbench.view.extension.antigravity-sidebar"];'
- 'ids.forEach(function(id){var f=null;for(var i=0;i<arr.length;i++){if(arr[i].id===id)f=arr[i]}'
- 'if(f){f.pinned=false}else{arr.push({id:id,pinned:false,visible:false})}});'
- 'try{var t2=d.transaction("ItemTable","readwrite");var o2=t2.objectStore("ItemTable");'
- 'o2.put(JSON.stringify(arr),"workbench.activity.pinnedViewlets2");o2.put("1","adom.activityBarSeeded")}catch(_){}}}}catch(_){}};'
- 'window.__hydrogenTrustedDomains=1;window.__hydrogenAbSeed=1}catch(_){}})();</script>')
-if '__hydrogenAbSeed' not in html:
+ 'r.onupgradeneeded=function(e){e.target.transaction.abort()};'
+ 'r.onsuccess=function(e){var d=e.target.result;setTimeout(function(){try{d.close()}catch(_){}},3000);'
+ 'try{var t=d.transaction("ItemTable","readwrite");t.objectStore("ItemTable").put(JSON.stringify(["*"]),"http.linkProtectionTrustedDomains")}catch(_){}};'
+ 'window.__hydrogenTrustedDomains=1}catch(_){}})();</script>')
+if '__hydrogenTrustedDomains' not in html:
     html = html.replace('</head>', SCRIPT + '</head>')
     open(wb, 'w').write(html)
 PY
 grep -q __hydrogenTrustedDomains "$WB"
-grep -q adom.activityBarSeeded "$WB"
 
 # The IndexedDB seed above is DEFEATED on macOS: Hydrogen's WKWebView loads code-server as a
 # cross-origin iframe, whose partitioned third-party IndexedDB never reaches the store
@@ -643,31 +633,9 @@ as_adom "$CS --list-extensions --show-versions 2>/dev/null | grep -qi \"claude-c
 as_adom "V=\$($CS --list-extensions --show-versions 2>/dev/null | grep -i claude-code); echo \"  final: \$V\"; echo \"\$V\" | grep -q \"@${CLAUDE_EXT_PIN}\" && ! echo \"\$V\" | grep -v \"@${CLAUDE_EXT_PIN}\" | grep -q claude-code"
 rm -f /tmp/claude-code-pin.vsix
 
-# One Claude icon, not two: the extension manifest declares TWO activity-bar
-# containers with the same logo (claude-sidebar shows because Code 1.100 lacks the
-# secondary sidebar; claude-sessions-sidebar's context is set unconditionally), and
-# Code 1.100 IGNORES `when` on viewsContainers (honors it on views). Drop the
-# sessions container, gate its views off, and clear the manifest cache the
-# workbench actually reads (mirrors CLAUDE_EXT_PIN_SH in adom-hydrogen).
-log "claude-code activity-bar icon dedupe"
-as_adom "python3 - <<'PY'
-import json, glob, os
-for pj in glob.glob(os.path.expanduser('~/.local/share/code-server/extensions/anthropic.claude-code-*/package.json')):
-    d = json.load(open(pj))
-    c = d.get('contributes', {})
-    ab = c.get('viewsContainers', {}).get('activitybar', [])
-    if not any(x.get('id') == 'claude-sessions-sidebar' for x in ab):
-        continue
-    c['viewsContainers']['activitybar'] = [x for x in ab if x.get('id') != 'claude-sessions-sidebar']
-    views = c.get('views', {})
-    moved = views.pop('claude-sessions-sidebar', [])
-    for v in moved: v['when'] = 'false'
-    views.setdefault('claude-sidebar', []).extend(moved)
-    json.dump(d, open(pj, 'w'), indent=1)
-    print('  deduped:', pj)
-cache = os.path.expanduser('~/.local/share/code-server/CachedProfilesData/__default__profile__/extensions.user.cache')
-if os.path.exists(cache): os.remove(cache)
-PY"
+# (2026-10-02) No Claude activity-bar dedupe here any more: the bake used to drop the
+# sessions container while Hydrogen's runtime (CLAUDE_EXT_LAYOUT_SH, every launch) drops the
+# other one — two writers running opposite ways. The runtime is the single writer now.
 
 # ── tidy ───────────────────────────────────────────────────────────────────
 # install.mjs leaves an empty {"mcpServers":{}} at ~/project/.mcp.json —
